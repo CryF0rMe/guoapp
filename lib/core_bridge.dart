@@ -19,6 +19,7 @@ import 'cover_decoder.dart';
 import 'catalog_updates.dart';
 import 'download_collections.dart';
 import 'resource_settings.dart';
+import 'diary_service.dart';
 
 typedef _NativeRequest = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _DartRequest = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -631,6 +632,9 @@ class NativeRepository extends AppRepository {
   @override
   Future<void> initialize() async {
     final directory = await getApplicationSupportDirectory();
+    if (!background) {
+      DiaryService.nativeLogPath = path.join(directory.path, 'logs', 'app.log');
+    }
     final build = await _call({
       'action': 'initialize',
       'directory': directory.path,

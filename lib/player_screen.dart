@@ -14,6 +14,7 @@ import 'app_orientation.dart';
 import 'app_theme.dart';
 import 'core_bridge.dart';
 import 'diary_service.dart';
+import 'playback_diagnostics.dart';
 import 'luna_exo_player.dart';
 import 'danmaku_controller.dart';
 import 'danmaku_overlay.dart';
@@ -232,9 +233,12 @@ class _PlayerScreenState extends State<PlayerScreen>
     _configurePictureInPicture();
     _subscriptions.add(
       _player.stream.error.listen((error) {
+        DiaryService.add(
+          '[Recovery] player_error error=${playbackDiagnosticError(error)} generation=$_generation accepted=$_acceptErrors',
+        );
         if (_enhancement.handlePlaybackError(error)) return;
         if (!_closed && _acceptErrors && mounted && error.trim().isNotEmpty) {
-          _queueRecovery();
+          _queueRecovery(reason: 'player_error');
         }
       }),
     );
@@ -248,7 +252,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           final duration = _player.state.duration;
           if (duration <= Duration.zero ||
               _player.state.position < duration - const Duration(seconds: 2)) {
-            _queueRecovery();
+            _queueRecovery(reason: 'early_completion');
           } else if (_autoAdvance &&
               _foreground &&
               !_panelOpen &&
@@ -315,7 +319,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             foreground: _foreground,
             now: DateTime.now(),
           )) {
-        unawaited(_recover());
+        unawaited(_recover(reason: 'position_stalled_20s'));
       }
     });
     final handoff = widget.handoff;
@@ -329,7 +333,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         handoff?.cancelled == true) {
       handoff?.fail('接收用户已变更，推送已取消');
       if (handoff != null)
-        unawaited(widget.repository.release(handoff.plan.session));
+        unawaited(_releasePlayback(handoff.plan.session, 'handoff_discarded'));
       _loading = false;
       _error = '播放接收已取消';
     } else {
@@ -462,7 +466,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       unawaited(_saveProgress(flush: true));
     }
     if (visible && _pendingError) {
-      _queueRecovery();
+      _queueRecovery(reason: 'foreground_pending_error');
     }
   }
 
@@ -749,7 +753,14 @@ class _PlayerScreenState extends State<PlayerScreen>
     _applyLifecycleVisibility();
   }
 
-  void _queueRecovery() {
+  Future<void> _releasePlayback(String session, String reason) async {
+    DiaryService.add(
+      '[Recovery] release reason=$reason generation=$_generation session=${playbackDiagnosticId(session)}',
+    );
+    await widget.repository.release(session);
+  }
+
+  void _queueRecovery({required String reason}) {
     if (_closed || !_acceptErrors || _error != null) {
       return;
     }
@@ -759,6 +770,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
     final ticket = _generation;
     final position = _player.state.position;
+    DiaryService.add('[Recovery] queued reason=$reason generation=$ticket');
     _errorTimer = Timer(const Duration(milliseconds: 900), () {
       if (_closed || ticket != _generation || !_foreground || !_acceptErrors) {
         return;
@@ -771,11 +783,11 @@ class _PlayerScreenState extends State<PlayerScreen>
           state.position > position + const Duration(milliseconds: 300)) {
         return;
       }
-      unawaited(_recover());
+      unawaited(_recover(reason: reason));
     });
   }
 
-  Future<void> _recover() async {
+  Future<void> _recover({required String reason}) async {
     final current = _plan;
     if (_closed ||
         !_acceptErrors ||
@@ -792,6 +804,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     final action = current.local
         ? PlaybackRecoveryAction.stop
         : _recovery.next(current);
+    DiaryService.add(
+      '[Recovery] start reason=$reason action=${action.name} generation=$_generation route=${current.routeIndex}/${current.routeCount} session=${playbackDiagnosticId(current.session)} position=${_player.state.position.inMilliseconds} duration=${_player.state.duration.inMilliseconds} buffering=${_player.state.buffering}',
+    );
     if (action == PlaybackRecoveryAction.stop) {
       _resumePosition = position;
       final ticket = _generation;
@@ -805,7 +820,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             _openedIndex = -1;
             await _player.stop();
           } finally {
-            await widget.repository.release(current.session);
+            await _releasePlayback(current.session, 'recovery_stop');
           }
         });
       } catch (_) {}
@@ -970,7 +985,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         if (recoveryAction == PlaybackRecoveryAction.alternative) {
           retained = previous;
         } else if (previous != null) {
-          await widget.repository.release(previous.session);
+          await _releasePlayback(previous.session, 'replace_or_refresh');
         }
       });
       if (_closed || ticket != _generation) {
@@ -993,7 +1008,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       final plan = prepared;
       await _serialize(() async {
         if (_closed || ticket != _generation) {
-          await widget.repository.release(plan.session);
+          await _releasePlayback(plan.session, 'stale_generation');
           return;
         }
         if (plan.url.isEmpty) {
@@ -1014,8 +1029,14 @@ class _PlayerScreenState extends State<PlayerScreen>
               await platform.setProperty('vd-lavc-skiploopfilter', 'all');
               await platform.setProperty('vd-lavc-skipidct', 'all');
               await platform.setProperty('vd-lavc-threads', '2');
-              await platform.setProperty('demuxer-max-bytes', '${4 * 1024 * 1024}');
-              await platform.setProperty('demuxer-max-back-bytes', '${1 * 1024 * 1024}');
+              await platform.setProperty(
+                'demuxer-max-bytes',
+                '${4 * 1024 * 1024}',
+              );
+              await platform.setProperty(
+                'demuxer-max-back-bytes',
+                '${1 * 1024 * 1024}',
+              );
               await platform.setProperty('demuxer-readahead-secs', '5');
             } else {
               await platform.setProperty('hwdec', 'auto-safe');
@@ -1045,7 +1066,9 @@ class _PlayerScreenState extends State<PlayerScreen>
         _plan = plan;
         installed = true;
         _acceptErrors = true;
-        DiaryService.add('[Play] 调用 _player.open: url=${plan.url}, headers=${plan.headers.keys.toList()}');
+        DiaryService.add(
+          '[Play] open generation=$ticket route=${plan.routeIndex}/${plan.routeCount} session=${playbackDiagnosticId(plan.session)} url=${playbackDiagnosticUrl(plan.url)} headers=${plan.headers.keys.toList()}',
+        );
         await _player.open(
           Media(
             plan.url,
@@ -1075,14 +1098,16 @@ class _PlayerScreenState extends State<PlayerScreen>
         }
       });
     } catch (error) {
-      DiaryService.add('[Play] 捕获播放流程错误: $error');
+      DiaryService.add(
+        '[Play] flow_error generation=$ticket error=${playbackDiagnosticError(error)}',
+      );
       if (!_closed && mounted && ticket == _generation) {
         if (prepared != null && identical(_plan, prepared)) {
           _acceptErrors = true;
-          _queueRecovery();
+          _queueRecovery(reason: 'open_exception');
         } else {
           if (prepared != null) {
-            await widget.repository.release(prepared.session);
+            await _releasePlayback(prepared.session, 'failed_preparation');
           }
           if (mounted && !_closed && ticket == _generation) {
             setState(() {
@@ -1096,14 +1121,14 @@ class _PlayerScreenState extends State<PlayerScreen>
           }
         }
       } else if (prepared != null && !installed) {
-        await widget.repository.release(prepared.session);
+        await _releasePlayback(prepared.session, 'failed_preparation');
       }
     } finally {
       if (warmed != null && !installed) {
-        await widget.repository.release(warmed.session);
+        await _releasePlayback(warmed.session, 'unused_preload');
       }
       if (retained != null) {
-        await widget.repository.release(retained!.session);
+        await _releasePlayback(retained!.session, 'fallback_previous');
       }
     }
   }
@@ -1472,7 +1497,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
-    unawaited(widget.repository.release(_session));
+    unawaited(_releasePlayback(_session, 'screen_dispose'));
     unawaited(_loader.close().catchError((Object _) {}));
     unawaited(
       _operations.catchError((Object _) {}).then((_) async {
@@ -1768,7 +1793,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         FilledButton.tonalIcon(
-                          onPressed: () => DiaryService.showDiaryDialog(context),
+                          onPressed: () =>
+                              DiaryService.showDiaryDialog(context),
                           icon: const Icon(Icons.receipt_long_rounded),
                           label: const Text('查看播放日记'),
                         ),
@@ -1779,8 +1805,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                             label: const Text('改为在线播放'),
                           )
                         else if (!_localFailure &&
-                              !widget.localOnly &&
-                              widget.repository.supportsSourceManagement)
+                            !widget.localOnly &&
+                            widget.repository.supportsSourceManagement)
                           SourceDiagnosticsButton(
                             repository: widget.repository,
                             store: widget.store,

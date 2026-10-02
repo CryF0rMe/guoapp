@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,6 +8,8 @@ import 'package:flutter/services.dart';
 class DiaryService {
   static final List<String> _entries = <String>[];
   static const int maxEntries = 500;
+  static String? nativeLogPath;
+  static String _nativeText = '';
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
 
   /// 记录一条日记
@@ -22,19 +27,58 @@ class DiaryService {
   }
 
   /// 获取当前所有日记副本
-  static List<String> get entries => List<String>.unmodifiable(_entries);
+  static List<String> get entries => List<String>.unmodifiable([
+    ..._entries,
+    if (_nativeText.isNotEmpty) ..._nativeText.split('\n'),
+  ]);
 
   /// 清空日记
   static void clear() {
     _entries.clear();
+    _nativeText = '';
     revision.value++;
   }
 
   /// 获取合并后的完整日志文本
-  static String get fullText => _entries.join('\n');
+  static String get fullText => [_entries.join('\n'), _nativeText].join('\n');
+
+  static Future<void> refreshNativeLogs() async {
+    final path = nativeLogPath;
+    if (path == null) return;
+    final lines = <String>[];
+    for (final name in ['$path.1', path]) {
+      RandomAccessFile? file;
+      try {
+        file = await File(name).open();
+        final size = await file.length();
+        final start = size > 128 * 1024 ? size - 128 * 1024 : 0;
+        await file.setPosition(start);
+        final text = utf8.decode(
+          await file.read(size - start),
+          allowMalformed: true,
+        );
+        for (final line in text.split('\n').skip(start > 0 ? 1 : 0)) {
+          try {
+            final event = jsonDecode(line) as Map<String, dynamic>;
+            if ((event['event'] as String? ?? '').startsWith('stream.')) {
+              lines.add(line);
+            }
+          } catch (_) {}
+        }
+      } on FileSystemException {
+        continue;
+      } finally {
+        await file?.close();
+      }
+    }
+    _nativeText = lines
+        .skip(lines.length > 500 ? lines.length - 500 : 0)
+        .join('\n');
+  }
 
   /// 复制全部日记到剪贴板
   static Future<void> copyToClipboard(BuildContext context) async {
+    await refreshNativeLogs();
     final text = fullText;
     await Clipboard.setData(ClipboardData(text: text));
     if (context.mounted) {
@@ -48,7 +92,9 @@ class DiaryService {
   }
 
   /// 在界面上弹出交互式日记弹窗（兼容 TV 遥控器与手机触屏）
-  static Future<void> showDiaryDialog(BuildContext context) {
+  static Future<void> showDiaryDialog(BuildContext context) async {
+    await refreshNativeLogs();
+    if (!context.mounted) return;
     return showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -79,7 +125,10 @@ class DiaryService {
                 onPressed: () => copyToClipboard(dialogContext),
               ),
               IconButton(
-                icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
+                icon: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Colors.white70,
+                ),
                 tooltip: '清空日记',
                 onPressed: () => clear(),
               ),
