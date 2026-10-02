@@ -167,7 +167,7 @@ func TestNativeStreamDirectMP4WithHLSKeyPreservesRangeResponse(t *testing.T) {
 	defer stream.server.Close()
 
 	address, token := stream.nativeOpen(providerMedia{
-		URL:    upstream.URL + "/episode.mp4",
+		URL:    upstream.URL + "/episode.mp4?format=hls",
 		HLSKey: []byte("0123456789abcdef"),
 	})
 	defer stream.nativeRelease(token)
@@ -202,6 +202,61 @@ func TestNativeStreamDirectMP4WithHLSKeyPreservesRangeResponse(t *testing.T) {
 		response.Header.Get("Content-Range") != "bytes 1-3/7" || string(body) != "123" {
 		t.Fatalf("direct MP4 range response status=%d type=%q range=%q body=%q", response.StatusCode,
 			response.Header.Get("Content-Type"), response.Header.Get("Content-Range"), body)
+	}
+}
+
+func TestNativeStreamDowngradesPredictedPlaylistForMP4Response(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != "bytes=1-3" {
+			t.Errorf("range header = %q, want bytes=1-3", r.Header.Get("Range"))
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Range", "bytes 1-3/7")
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = io.WriteString(w, "123")
+	}))
+	defer upstream.Close()
+
+	engine, err := newNativeEngine(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := newNativeStreamServer(engine.downloader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.server.Close()
+
+	_, token := stream.nativeOpen(providerMedia{URL: upstream.URL + "/episode.mp4?format=hls"})
+	defer stream.nativeRelease(token)
+	stream.mu.Lock()
+	session := stream.sessions[token]
+	stream.mu.Unlock()
+	address := stream.nativeAsset(token, session, nativeStreamAsset{
+		kind:        "entry_playlist",
+		address:     upstream.URL + "/episode.mp4?format=hls",
+		contentType: "application/vnd.apple.mpegurl",
+	})
+
+	request, err := http.NewRequest(http.MethodGet, address, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Range", "bytes=1-3")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusPartialContent || response.Header.Get("Content-Type") != "video/mp4" ||
+		response.Header.Get("Content-Range") != "bytes 1-3/7" || string(body) != "123" {
+		t.Fatalf("predicted playlist did not downgrade to MP4: status=%d type=%q range=%q body=%q",
+			response.StatusCode, response.Header.Get("Content-Type"), response.Header.Get("Content-Range"), body)
 	}
 }
 

@@ -118,11 +118,9 @@ func (stream *nativeStreamServer) nativeOpen(media providerMedia) (string, strin
 	stream.sessions[token] = session
 	stream.mu.Unlock()
 	entry := nativeStreamAsset{kind: "media", address: media.URL, contentType: "video/mp4"}
-	isHLS := media.Playlist != "" || strings.Contains(strings.ToLower(media.URL), "m3u8") || strings.Contains(strings.ToLower(media.URL), "hls")
+	parsedURL, parseErr := url.Parse(media.URL)
+	isHLS := media.Playlist != "" || (parseErr == nil && strings.HasSuffix(strings.ToLower(parsedURL.Path), ".m3u8"))
 	if isHLS {
-		entry.contentType = "application/vnd.apple.mpegurl"
-	}
-	if parsed, err := url.Parse(media.URL); err == nil && strings.HasSuffix(strings.ToLower(parsed.Path), ".m3u8") {
 		entry.contentType = "application/vnd.apple.mpegurl"
 	}
 	if media.Playlist != "" {
@@ -359,12 +357,17 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 	if response.Request != nil && response.Request.URL != nil {
 		finalURL = response.Request.URL
 	}
-	playlist := strings.Contains(asset.contentType, "mpegurl") || strings.Contains(contentType, "mpegurl") || strings.HasSuffix(strings.ToLower(finalURL.Path), ".m3u8") || strings.Contains(strings.ToLower(finalURL.String()), "m3u8")
+	contentIsMP4 := strings.Contains(contentType, "video/mp4")
+	playlist := strings.Contains(contentType, "mpegurl") ||
+		(strings.HasSuffix(strings.ToLower(finalURL.Path), ".m3u8") && !contentIsMP4)
 	reader := bufio.NewReader(response.Body)
-	if !playlist && request.Method == http.MethodGet {
+	if request.Method == http.MethodGet {
 		peek, _ := reader.Peek(512)
-		if strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(string(peek), "\ufeff")), "#EXTM3U") {
+		bodyIsPlaylist := strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(string(peek), "\ufeff")), "#EXTM3U")
+		if bodyIsPlaylist {
 			playlist = true
+		} else if contentIsMP4 {
+			playlist = false
 		}
 	}
 	if playlist && request.Method == http.MethodHead {
