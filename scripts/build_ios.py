@@ -23,7 +23,7 @@ def validate_unsigned_application(application):
     executable = application / 'Runner'
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise SystemExit('iOS 包缺少可执行的 Runner。')
-    run(['xcrun', 'lipo', '-verify_arch', 'arm64', str(executable)])
+    run(['xcrun', 'lipo', str(executable), '-verify_arch', 'arm64'])
     if (application / 'embedded.mobileprovision').exists():
         raise SystemExit('未签名 iOS 包不应包含 provisioning profile。')
     signature = subprocess.run(['codesign', '-d', str(application)],
