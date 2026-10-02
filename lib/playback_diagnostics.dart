@@ -38,3 +38,21 @@ String playbackDiagnosticError(Object error) {
   text = text.replaceAll(RegExp(r'[a-fA-F0-9]{32,}'), '[redacted-id]');
   return text.length > 512 ? text.substring(0, 512) : text;
 }
+
+String playbackDiagnosticLogText(String text) {
+  final trimmed = text.trim();
+  if (trimmed.isEmpty) return '';
+  return playbackDiagnosticError(trimmed);
+}
+
+bool playbackDiagnosticLogRelevant({
+  required String level,
+  required String prefix,
+  required String text,
+}) {
+  final value = '$level $prefix $text'.toLowerCase();
+  if (RegExp(r'\b(error|fatal|warn)\b').hasMatch(value)) return true;
+  return RegExp(
+    r'http|https|tcp|tls|ssl|dns|hls|m3u8|demux|ffmpeg|ffmpeg/demuxer|lavf|stream|cache|protocol|whitelist|connection|connect|timeout|eof|127\.0\.0\.1|localhost',
+  ).hasMatch(value);
+}

@@ -2,11 +2,13 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.65+72**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.66+73**。
+
+0.2.66+73 在播放器页采集脱敏后的 media_kit/libmpv 关键日志，重点覆盖 HLS、HTTP、TLS、DNS、demux、协议白名单、连接和 EOF/timeout。红果站源管理的“检测连接与播放”已验证入口、目录、播放地址、播放密钥和 upstream 媒体 CDN 206 读头成功；当前 iOS 实机播放排查范围收窄为 `nativeStreamServer(127.0.0.1) -> media_kit/libmpv`。
 
 0.2.65+72 修复本地 HLS 代理把带 HLSKey 会话的 segment、key、map 响应误判为播放列表的问题。成功构建基线 7e49f2e 上的 `TestNativeHLSReadsNestedPlaylistKeyAndRanges` 可复现 segment Range 响应失败；修复仅移除 session 密钥作为响应格式的判据。该缺陷的复现不等于已确认 iPhone 播放故障同因，iOS 实机仍待复测。
 
-播放日记现可查看、复制本地代理的 `stream.local_request`、`stream.asset_request`、`stream.upstream_start`、`stream.network_phase`、`stream.upstream_headers`、`stream.playlist_rewrite`、`stream.local_response`、`stream.session_cancel`，并记录 `[Recovery]` 的触发原因、线路和 release 时机。日志仅使用会话哈希，剔除 URL query、用户凭证及长路径标识，不输出媒体密钥、Cookie 或 Authorization。原生日志沿用有轮转上限的 `logs/app.log`；日记打开和复制时读取最近两份日志的有界尾部。复测先只选一集，观察 master/media playlist 重写是否成功、key/map/segment 是否进入代理及最终 HTTP 状态；如仍转圈，复制完整播放日记。未调整 timeout、恢复策略或 CI 配置。
+播放日记现可查看、复制本地代理的 `stream.local_request`、`stream.asset_request`、`stream.upstream_start`、`stream.network_phase`、`stream.upstream_headers`、`stream.playlist_rewrite`、`stream.local_response`、`stream.session_cancel`，并记录 `[MPV]` 与 `[Recovery]` 的触发原因、线路和 release 时机。日志仅使用会话哈希，剔除 URL query、用户凭证及长路径标识，不输出媒体密钥、Cookie 或 Authorization。原生日志沿用有轮转上限的 `logs/app.log`；日记打开和复制时读取最近两份日志的有界尾部。复测先只选一集，观察 `_player.open` 后是否出现 `[MPV]` localhost/HLS 日志、master/media playlist 重写是否成功、key/map/segment 是否进入代理及最终 HTTP 状态；如仍转圈，复制完整播放日记。未调整红果 resolver、playback API、总 timeout、恢复策略或 CI 配置。
 
 本次定向验证：`go test ./core -run 'TestNative(HLS|Playback|Stream)|TestHongguo' -count=1` 与 `go vet ./core` 通过；Flutter 的 playback_diagnostics、playback_recovery、playback_loader、player_screen 共 16 项测试通过（禁用远程图片）。Dart 定向分析无 error，player_screen 仍有 2 项 warning 和 8 项 lint 提示。本地未执行 race 检查、iOS 编译或实机验证。
 

@@ -24,6 +24,52 @@ void main() {
     expect(playbackDiagnosticUrl('file:///private/local.mp4'), '[local-file]');
   });
 
+  test('mpv logs are filtered and redacted for playback diagnosis', () {
+    expect(
+      playbackDiagnosticLogRelevant(
+        level: 'info',
+        prefix: 'ffmpeg/demuxer',
+        text: 'Opening http://127.0.0.1:51037/media.m3u8',
+      ),
+      isTrue,
+    );
+    expect(
+      playbackDiagnosticLogRelevant(
+        level: 'info',
+        prefix: 'statusline',
+        text: 'AV: 00:00:01',
+      ),
+      isFalse,
+    );
+    final text = playbackDiagnosticLogText(
+      'Failed http://127.0.0.1:51037/0123456789abcdef0123456789abcdef0123456789abcdef/media.m3u8?token=secret authorization: Bearer private',
+    );
+    expect(text, contains('127.0.0.1:51037/[id='));
+    expect(text, contains('media.m3u8'));
+    expect(text, isNot(contains('0123456789abcdef')));
+    expect(text, isNot(contains('secret')));
+    expect(text, isNot(contains('private')));
+  });
+
+  test('mpv warning and network keywords are relevant', () {
+    expect(
+      playbackDiagnosticLogRelevant(
+        level: 'warn',
+        prefix: 'cplayer',
+        text: 'failed to open stream',
+      ),
+      isTrue,
+    );
+    expect(
+      playbackDiagnosticLogRelevant(
+        level: 'info',
+        prefix: 'cache',
+        text: 'EOF reached',
+      ),
+      isTrue,
+    );
+  });
+
   test(
     'diary copies bounded native stream events and skips partial records',
     () async {

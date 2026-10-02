@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -240,6 +239,23 @@ class _PlayerScreenState extends State<PlayerScreen>
         if (!_closed && _acceptErrors && mounted && error.trim().isNotEmpty) {
           _queueRecovery(reason: 'player_error');
         }
+      }),
+    );
+    _subscriptions.add(
+      _player.stream.log.listen((log) {
+        if (_closed ||
+            !playbackDiagnosticLogRelevant(
+              level: log.level,
+              prefix: log.prefix,
+              text: log.text,
+            )) {
+          return;
+        }
+        final text = playbackDiagnosticLogText(log.text);
+        if (text.isEmpty) return;
+        DiaryService.add(
+          '[MPV] level=${log.level} prefix=${playbackDiagnosticLogText(log.prefix)} generation=$_generation text=$text',
+        );
       }),
     );
     _subscriptions.add(
