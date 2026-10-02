@@ -143,6 +143,68 @@ func TestNativeHLSReadsNestedPlaylistKeyAndRanges(t *testing.T) {
 	}
 }
 
+func TestNativeStreamDirectMP4WithHLSKeyPreservesRangeResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != "bytes=1-3" {
+			t.Errorf("range header = %q, want bytes=1-3", r.Header.Get("Range"))
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Range", "bytes 1-3/7")
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = io.WriteString(w, "123")
+	}))
+	defer upstream.Close()
+
+	engine, err := newNativeEngine(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := newNativeStreamServer(engine.downloader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.server.Close()
+
+	address, token := stream.nativeOpen(providerMedia{
+		URL:    upstream.URL + "/episode.mp4",
+		HLSKey: []byte("0123456789abcdef"),
+	})
+	defer stream.nativeRelease(token)
+
+	stream.mu.Lock()
+	session := stream.sessions[token]
+	stream.mu.Unlock()
+	session.mu.Lock()
+	for _, asset := range session.assets {
+		if asset.kind == "entry_playlist" || asset.contentType != "video/mp4" {
+			session.mu.Unlock()
+			t.Fatalf("direct MP4 entry was classified as playlist: %+v", asset)
+		}
+	}
+	session.mu.Unlock()
+
+	request, err := http.NewRequest(http.MethodGet, address, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Range", "bytes=1-3")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusPartialContent || response.Header.Get("Content-Type") != "video/mp4" ||
+		response.Header.Get("Content-Range") != "bytes 1-3/7" || string(body) != "123" {
+		t.Fatalf("direct MP4 range response status=%d type=%q range=%q body=%q", response.StatusCode,
+			response.Header.Get("Content-Type"), response.Header.Get("Content-Range"), body)
+	}
+}
+
 func TestHongguoDetailAndPlayableQuality(t *testing.T) {
 	detail := map[string]any{"series_id": "700001", "series_title": "合成测试", "episode_cnt": 2,
 		"video_list": []any{
