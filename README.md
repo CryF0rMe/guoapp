@@ -2,7 +2,9 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.68+75**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.72+79**。
+
+0.2.72+79 同步朋友 [Xanerix/guoapp](https://github.com/Xanerix/guoapp) 的 Android 播放修复（`6afdc6e5b25536352b280ff0f953e37a73a16476`）：Android 恢复使用 media_kit，使现有 `decryption_key` 配置生效；电视硬解码改为 `mediacodec-copy`（参考 `b1a9b82ab6ccf4cbc92899b7f377f68d6552bdc8`）。iOS 包默认显示名改为英文，并保留简体中文本地化，兼容侧载工具的名称校验。保留本仓库的 iOS 代理、日志和打包检查。安卓与 iOS 真机播放均待本仓库复测，作为开发快照发布。
 
 0.2.68+75 修复 URL query 含 `hls` 时误判直接 MP4 为播放列表的问题。入口只按 playlist 数据或 URL path 的 `.m3u8` 后缀预判；代理响应优先使用 upstream MIME 并 sniff playlist body，MP4 即使遇到预标记 playlist 的 asset 也保留 Range 和 HTTP 206 透传。
 
@@ -94,9 +96,9 @@ Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源�
 | --- | --- |
 | `*-android` | 三种架构 APK 和 SHA256 |
 | `*-windows` | job 暂时禁用，不生成产物 |
-| `*-ios-unsigned` | arm64 iPhone 未签名 IPA、`Runner.app` ZIP 和 SHA256；下载后自行签名安装，待首次 macOS CI 构建及真机验收 |
+| `*-ios-unsigned` | arm64 iPhone 未签名 IPA、`Runner.app` ZIP 和 SHA256；下载后自行签名安装；历史 CI 构建已成功，新版真机播放待复测 |
 
-当前 Release job 只等待 Android 成功，并且只下载 `*-android` 产物；iOS 产物先从 Actions Artifacts 下载，不加入 Release。Release tag 为 `app-v{version}`（版本中的 `+` 替换为 `-`）。发布新版本前需先在 `pubspec.yaml` 提升 `version`，否则会覆盖同名 tag 的 Release。
+Release job 等待 Android 与 iOS 两版构建成功，再收集 APK、IPA、Runner.app ZIP 并统一生成 SHA256SUMS.txt；仅主分支或发布标签运行可以发布，PR 不发布。发布前检查两版 IPA 和 arm64 APK 均存在，作为预发布开发快照上传；不会删除已有附件。Release tag 为 `app-v{version}`（版本中的 `+` 替换为 `-`）。发布新版本前需先在 `pubspec.yaml` 提升 `version`，否则会覆盖同名 tag 的 Release。
 
 Android 正式发布使用同一签名并递增构建号，在仓库 Secrets 配置：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。未配置时生成 debug 签名预览包。
 

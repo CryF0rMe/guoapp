@@ -205,8 +205,11 @@ jobs:
           retention-days: 14
 
   release:
-    needs: [android]
-    if: always() && needs.android.result == 'success'
+    needs: [android, ios]
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')) &&
+      needs.android.result == 'success' && needs.ios.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -215,7 +218,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: '*-android'
+          pattern: '*'
           path: artifacts
       - name: 生成发布文件清单
         run: |
@@ -231,6 +234,10 @@ jobs:
               fi
               cp "$file" "release/$name"
             done
+          done
+          for edition in hongguojian zhenguojian; do
+            test -s "release/${edition}-${version}-ios-unsigned.ipa"
+            test -s "release/${edition}-${version}-arm64-v8a.apk"
           done
           cd release
           mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
@@ -260,8 +267,9 @@ jobs:
             printf '\n%s\n' "iOS（未签名，需自行签名后才能安装）："
             printf '%s\n' "- *-ios-unsigned.ipa：未签名 IPA，用 AltStore / Sideloadly / TrollStore 等工具自签后安装"
             printf '%s\n' "- *-ios-unsigned-app.zip：未签名 Runner.app 压缩包，供自行签名 / 打包使用"
-            printf '\n%s\n' "Windows（解压后运行 hongguojian.exe 或 zhenguojian.exe）："
-            printf '%s\n' "- *-windows-x64.zip：Windows 10/11 x64 完整包；构建机没有音频和图形设备，播放自检未通过，未做设备验收"
+            printf '\n%s\n' "开发快照：CI 构建通过不代表真机播放验收通过，iOS 需复测。"
+            printf '%s\n' "安卓播放修复参考 Xanerix/guoapp 的 6afdc6e5b25536352b280ff0f953e37a73a16476；电视解码设置参考 b1a9b82ab6ccf4cbc92899b7f377f68d6552bdc8。"
+            printf '%s\n' "朋友维护的安卓版本：https://github.com/Xanerix/guoapp/releases"
             printf '\n%s\n' "校验：SHA256SUMS.txt"
             if printf '%s\n' "${{ vars.ANDROID_CERT_SHA256 }}" | grep -q .; then
               printf '%s\n' "签名证书 SHA-256：${{ vars.ANDROID_CERT_SHA256 }}"
@@ -271,13 +279,15 @@ jobs:
           } > notes.md
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release/* --clobber
-            gh release edit "$tag" --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
-            # 清理上一次构建留下、本轮已不再产出的附件，避免下载到过期文件。
-            for name in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
-              if [ ! -e "release/$name" ]; then
-                gh release delete-asset "$tag" "$name" --yes
-              fi
-            done
+            gh release edit "$tag" --prerelease --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
           else
-            gh release create "$tag" release/* --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
+            gh release create "$tag" release/* --target "$GITHUB_SHA" --prerelease --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
+          fi
+          old_tag=app-v0.2.68-75
+          if gh release view "$old_tag" --json body --jq '.body' > old-notes.md && ! grep -q '此旧版本 Android 播放链路' old-notes.md; then
+            {
+              printf '%s\n\n' '> 已知问题：此旧版本 Android 播放链路未包含 Xanerix 的解密修复，暂不推荐下载。请使用本仓库更新的开发快照，或 https://github.com/Xanerix/guoapp/releases 的安卓版本。'
+              cat old-notes.md
+            } > old-notes-updated.md
+            gh release edit "$old_tag" --notes-file old-notes-updated.md
           fi
